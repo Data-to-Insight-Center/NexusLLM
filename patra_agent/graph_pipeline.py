@@ -111,7 +111,6 @@ def make_link_prediction(predictor, node_labels, source_label, target_label, sou
         
         result = session.run(query, {"source_id": source_id, "target_id": target_id})
         record = result.single()
-        print("record: -- ", record)
         if record:
             source_id = record['source_id']
             target_id = record['target_id']
