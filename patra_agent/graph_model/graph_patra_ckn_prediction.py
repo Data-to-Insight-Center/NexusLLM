@@ -109,33 +109,32 @@ class RGCNPredictor:
                         
         return [item[1] for item in sorted(potential_connections, key=lambda x: -x[0])]
 
-    def find_missing_edges(self, threshold: float = 0.8) -> List[Dict]:
+    def find_missing_edges(self, node_id, threshold: float = 0.8) -> List[Dict]:
         missing_edges = []
-
-        existing_edges = set(map(tuple, self.last_data.edge_index.t().tolist()))
+        source_idx = self.node_mapping[node_id]
+        existing_edges = set()
+        for src, tgt in self.last_data.edge_index.t().tolist():
+            if src == source_idx:
+                existing_edges.add(tgt)
+                
+        potential_connections = self.find_potential_connections(
+            node_id,
+            top_k = 20,
+            threshold=threshold
+        )
         
-
-        for node_id in tqdm(self.node_mapping.keys(), desc="Finding missing edges"):
-            potential_connections = self.find_potential_connections(
-                node_id, 
-                top_k=5, 
-                threshold=threshold
-            )
-            
-            for connection in potential_connections:
-                source_idx = self.node_mapping[node_id]
-                target_idx = self.node_mapping[connection['target_id']]
-
-                if ((source_idx, target_idx) not in existing_edges and 
-                    (target_idx, source_idx) not in existing_edges):
-                    missing_edges.append({
-                        'source_id': node_id,
-                        'source_type': self.get_node_type(node_id),
-                        'target_id': connection['target_id'],
-                        'target_type': connection['target_type'],
-                        'probability': connection['probability']
-                    })
-                    
+        for connection in potential_connections:
+            target_idx = self.node_mapping[connection['target_id']]
+            if target_idx not in existing_edges:
+                missing_edges.append({
+                    'source_id': node_id,
+                    'source_type': self.get_node_type(node_id),
+                    'target_id': connection['target_id'],
+                    'target_type': connection['target_type'],
+                    'probability': connection['probability'],
+                    'existing_connections': len(existing_edges)
+                })
+    
         return sorted(missing_edges, key=lambda x: x['probability'], reverse=True)
 
     def extract_graph_data(self, node_labels, relationship_types):
@@ -179,7 +178,7 @@ def main():
         uri=NEO4J_URI,
         username=NEO4J_USERNAME,
         password=NEO4J_PWD,
-        model_path='graph_model/trained_model/rgcn_model.pt'
+        model_path='rgcn_model.pt'
         
     )
     
@@ -191,21 +190,20 @@ def main():
         predictor.extract_graph_data(node_labels, relationship_types)
         
         #  Finding  potential connections for a node
-        test_node = "4:541e34b4-9f36-4570-9bcc-626a32d21a74:7"
+        test_node = "4:541e34b4-9f36-4570-9bcc-626a32d21a74:17"
         print(f"\nFinding potential connections for node {test_node}:")
         potential_connections = predictor.find_potential_connections(
             test_node,
             top_k=10,
             threshold=0.5
         )
-        print("potential_connections",potential_connections,"----")
         for conn in potential_connections:
             print(f"Potential connection to {conn['target_id']} "
                   f"({conn['target_type']}) with probability {conn['probability']:.4f}")
         
         #Finding missing edges in the graph
         print("\nFinding potentially missing edges in the graph:")
-        missing_edges = predictor.find_missing_edges(threshold=0.8)
+        missing_edges = predictor.find_missing_edges(test_node, threshold=0.2)
         
         print("\nTop potentially missing edges:")
         for edge in missing_edges[:10]:  # Show top 10

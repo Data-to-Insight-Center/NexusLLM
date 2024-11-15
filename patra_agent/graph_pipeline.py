@@ -54,26 +54,6 @@ def evaluate_model_performance(y_test, y_pred, y_pred_proba, X):
 
     return precision, recall, pr_auc
 
-def analyze_feature_importance(rf_model, X):
-    """Analyze and print feature importance"""
-    print("\n=== Feature Importance Analysis ===")
-    feature_length = X.shape[1] // 6
-    feature_importances = rf_model.feature_importances_
-    
-    importance_sections = [
-        "Source Node Features",
-        "Target Node Features",
-        "Feature Differences",
-        "Feature Products",
-        "Source Node Type",
-        "Target Node Type"
-    ]
-    
-    for i, section in enumerate(importance_sections):
-        start_idx = i * feature_length
-        end_idx = (i + 1) * feature_length
-        section_importance = feature_importances[start_idx:end_idx].mean()
-        print(f"{section}: {section_importance:.3f}")
 
 def plot_precision_recall_curve(recall, precision, pr_auc):
     plt.figure(figsize=(10, 6))
@@ -143,19 +123,15 @@ def main():
     try:
         node_labels = ["Model", "EdgeDevice", "Deployment"]
         relationship_types = ["On_Device", "HAS_DEPLOYMENT"]
-        
-        print("=== Starting Link Prediction Pipeline ===")
 
         rf_model, X, y_pred, y_pred_proba, y_test = train_and_evaluate_model(
             predictor, node_labels, relationship_types
         )
 
-
         precision, recall, pr_auc = evaluate_model_performance(
             y_test, y_pred, y_pred_proba, X
         )
 
-        analyze_feature_importance(rf_model, X)
         plot_precision_recall_curve(recall, precision, pr_auc)
         predictor.model = rf_model
 

@@ -2,7 +2,7 @@ import os
 from sklearn.metrics import roc_auc_score, average_precision_score
 from typing import List, Dict, Tuple
 from dotenv import load_dotenv
-from patra_agent.graph_model.rgcn_model import RGCNLinkPrediction
+from rgcn_model import RGCNLinkPrediction
 import torch
 import numpy as np
 from torch_geometric.data import Data

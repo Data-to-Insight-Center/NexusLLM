@@ -76,7 +76,6 @@ class RGCNLinkPrediction:
         self.driver.close()
 
     def extract_graph_data(self, node_labels: List[str], relationship_types: List[str]) -> Data:
-        """Extract graph data efficiently using batching."""
         with self.driver.session() as session:
             nodes, node_types = self._extract_nodes_batch(session, node_labels)
             edge_index, edge_types = self._extract_edges_batch(session, relationship_types)
@@ -90,7 +89,6 @@ class RGCNLinkPrediction:
             )
     
     def _extract_nodes_batch(self, session, node_labels: List[str]) -> Tuple[List[int], List[int]]:
-        """Extract nodes in batches for better memory efficiency."""
         nodes = []
         node_types = []
         
@@ -121,7 +119,6 @@ class RGCNLinkPrediction:
         return nodes, node_types
         
     def _extract_edges_batch(self, session, relationship_types: List[str]) -> Tuple[List[List[int]], List[int]]:
-        """Extract edges in batches for better memory efficiency."""
         edge_index = [[], []]
         edge_types = []
         
