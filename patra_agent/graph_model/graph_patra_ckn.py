@@ -1,5 +1,5 @@
 import os
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score, f1_score, precision_recall_fscore_support, confusion_matrix
 from typing import List, Dict, Tuple
 from dotenv import load_dotenv
 from rgcn_model import RGCNLinkPrediction
@@ -50,20 +50,22 @@ class RGCNTrainer:
             edge_index=data.edge_index[:, mask],
             edge_type=data.edge_type[mask],
             node_type=data.node_type,
+            node_properties = data.node_properties,
             num_nodes=data.num_nodes
         )
         return split_data
 
     @torch.no_grad()
     def evaluate_split(self, model: torch.nn.Module, data: Data, 
-                      split_edge_index: torch.Tensor, batch_size: int = 10000) -> Tuple[float, float]:
+                      split_edge_index: torch.Tensor, batch_size: int = 10000) -> Dict[str, float]:
         model.eval()
         device = next(model.parameters()).device
         
         z = model(data.x.to(device), 
                  data.edge_index.to(device),
                  data.edge_type.to(device),
-                 data.node_type.to(device))
+                 data.node_type.to(device),
+                 data.node_properties.to(device))
         
         all_preds = []
         all_true = []
@@ -87,9 +89,43 @@ class RGCNTrainer:
         
         pred = torch.cat(all_preds)
         true = torch.cat(all_true)
-        
-        return roc_auc_score(true, pred), average_precision_score(true, pred)
+        auc = roc_auc_score(true, pred)
+        ap = average_precision_score(true, pred)
+        f1 = f1_score(true, (pred > 0.5).float())
+        precision, recall, f1_micro, _ = precision_recall_fscore_support(true, (pred > 0.5).float(), average='micro')
+        conf_matrix = confusion_matrix(true, (pred > 0.5).float())
+        mrr = self.calculate_mrr(true, pred)
+        precision_at_k = self.calculate_precision_at_k(true, pred, k=10)
+        recall_at_k = self.calculate_recall_at_k(true, pred, k=10)
 
+        return {
+            "AUC": auc,
+            "Average Precision": ap,
+            "F1 Score": f1,
+            "Precision": precision,
+            "Recall": recall,
+            "Confusion Matrix": conf_matrix.tolist(),
+            "MRR": mrr,
+            "Precision@10": precision_at_k,
+            "Recall@10": recall_at_k
+        }
+    
+    def calculate_mrr(self, true: torch.Tensor, pred: torch.Tensor) -> float:
+        sorted_indices = torch.argsort(pred, descending=True)
+        sorted_true = true[sorted_indices]
+        ranks = torch.arange(1, len(sorted_true) + 1)
+        reciprocal_ranks = 1 / ranks[sorted_true == 1]
+        return reciprocal_ranks.sum().item()
+
+    def calculate_precision_at_k(self, true: torch.Tensor, pred: torch.Tensor, k: int) -> float:
+        sorted_indices = torch.argsort(pred, descending=True)
+        top_k = sorted_indices[:k]
+        return true[top_k].sum().item() / k
+
+    def calculate_recall_at_k(self, true: torch.Tensor, pred: torch.Tensor, k: int) -> float:
+        sorted_indices = torch.argsort(pred, descending=True)
+        top_k = sorted_indices[:k]
+        return true[top_k].sum().item() / true.sum().item()
 
 def main():
     
@@ -114,11 +150,13 @@ def main():
         predictor.train_model(train_data, num_epochs=200)
         
         print("\nEvaluating on test set...")
-        test_auc, test_ap = trainer.evaluate_split(predictor.model, train_data, test_data.edge_index)
-        print(f"Test Set Results - AUC: {test_auc:.4f}, Average Precision: {test_ap:.4f}")
+        metrics = trainer.evaluate_split(predictor.model, test_data, test_data.edge_index)
+        print("\nModel Performance Metrics:")
+        for metric, value in metrics.items():
+            print(f"{metric}: {value}")
         
         print("\nSaving the trained model...")
-        predictor.save_model('rgcn_model.pt')
+        predictor.save_model('rgcn_model3.pt')
         
     except Exception as e:
         print(f"An error occurred: {str(e)}")

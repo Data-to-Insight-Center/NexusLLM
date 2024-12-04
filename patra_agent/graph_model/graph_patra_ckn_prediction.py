@@ -37,13 +37,46 @@ class RGCNPredictor:
         self.node_mapping = checkpoint['node_mapping']
         self.node_type_mapping = checkpoint['node_type_mapping']
         self.relation_mapping = checkpoint['relation_mapping']
-        
+
+        property_mappings = {
+            'Model': {
+                'props': ['Backbone', 'Batch_Size', 'Learning_Rate', 'Precision', 
+                        'Recall', 'test_accuracy'],
+                'numeric': ['Batch_Size', 'Learning_Rate', 'Precision', 'Recall', 'test_accuracy'],
+                'categorical': ['Backbone']
+            },
+            'Device': {
+                'props': ['device_id'],
+                'numeric': ['device_id'],
+                'categorical': []
+            },
+            'Deployment': {
+                'props': ['deployment_id', 'status'],
+                'numeric': ['deployment_id'],
+                'categorical': ['status']
+            },
+            'Server': {
+                'props': ['server_id'],
+                'categorical': ['server_id'],
+                'numeric': []
+            },
+            'Service': {
+                'props': ['service_id'],
+                'numeric': ['service_id'],
+                'categorical': []
+            }
+        }
+        max_properties = max(
+        len(mapping['numeric']) + len(mapping['categorical'])
+        for mapping in property_mappings.values()
+        )
         self.model = RGCN(
             num_nodes=len(self.node_mapping),
             num_node_types=len(self.node_type_mapping),
             num_relations=len(self.relation_mapping),
             hidden_channels=16,
-            num_bases=4
+            num_bases=4,
+            max_properties=max_properties
         ).to(self.device)
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -57,7 +90,7 @@ class RGCNPredictor:
         return self.reverse_node_type_mapping[node_type_idx]
 
     def find_potential_connections(self, node_id: str, top_k: int = 5, 
-                                 threshold: float = 0.5,
+                                 threshold: float = 0.2,
                                  target_type: str = None) -> List[Dict]:
 
         if node_id not in self.node_mapping:
@@ -89,7 +122,7 @@ class RGCNPredictor:
                 probs = self.model.decode(z, edge_index).cpu().detach()
                 
             for j, target_idx in enumerate(batch_targets):
-                if target_idx == source_idx:  # Skip self-connections
+                if target_idx == source_idx:
                     continue
                     
                 prob = probs[j].item()
@@ -109,7 +142,7 @@ class RGCNPredictor:
                         
         return [item[1] for item in sorted(potential_connections, key=lambda x: -x[0])]
 
-    def find_missing_edges(self, node_id, threshold: float = 0.8) -> List[Dict]:
+    def find_missing_edges(self, node_id, threshold: float = 0.2) -> List[Dict]:
         missing_edges = []
         source_idx = self.node_mapping[node_id]
         existing_edges = set()
@@ -119,7 +152,7 @@ class RGCNPredictor:
                 
         potential_connections = self.find_potential_connections(
             node_id,
-            top_k = 20,
+            top_k = 10,
             threshold=threshold
         )
         
@@ -139,17 +172,28 @@ class RGCNPredictor:
 
     def extract_graph_data(self, node_labels, relationship_types):
         predictor = RGCNLinkPrediction(
-                    NEO4J_URI, 
-                    NEO4J_USERNAME,
-                    NEO4J_PWD, 
+        uri=NEO4J_URI, 
+        username=NEO4J_USERNAME,
+        password=NEO4J_PWD,
         )
-        predictor.driver = self.driver
-        predictor.node_mapping = self.node_mapping
-        predictor.node_type_mapping = self.node_type_mapping
-        predictor.relation_mapping = self.relation_mapping
+        with self.driver.session() as session:
+            predictor.driver = self.driver
+            predictor.node_mapping = self.node_mapping
+            predictor.node_type_mapping = self.node_type_mapping
+            predictor.relation_mapping = self.relation_mapping
+            nodes, node_types, node_properties = predictor._extract_nodes_batch(session, node_labels)
+            edge_index, edge_types = predictor._extract_edges_batch(session, relationship_types)
         
-        self.last_data = predictor.extract_graph_data(node_labels, relationship_types)
-        return self.last_data
+        data = Data(
+            x=torch.tensor(nodes, dtype=torch.long),
+            edge_index=torch.tensor(edge_index, dtype=torch.long),
+            edge_type=torch.tensor(edge_types, dtype=torch.long),
+            node_type=torch.tensor(node_types, dtype=torch.long),
+            node_properties=torch.tensor(node_properties, dtype=torch.float),  
+            num_nodes=len(self.node_mapping)
+        )
+        self.last_data = data    
+        return data
     
     @torch.no_grad()
     def get_embeddings(self) -> torch.Tensor:
@@ -161,7 +205,9 @@ class RGCNPredictor:
             self.last_data.x.to(self.device),
             self.last_data.edge_index.to(self.device),
             self.last_data.edge_type.to(self.device),
-            self.last_data.node_type.to(self.device)
+            self.last_data.node_type.to(self.device),
+            self.last_data.node_properties.to(self.device)
+            
         )
     
     def close(self):
@@ -178,7 +224,7 @@ def main():
         uri=NEO4J_URI,
         username=NEO4J_USERNAME,
         password=NEO4J_PWD,
-        model_path='rgcn_model.pt'
+        model_path='rgcn_model3.pt'
         
     )
     
@@ -190,12 +236,12 @@ def main():
         predictor.extract_graph_data(node_labels, relationship_types)
         
         #  Finding  potential connections for a node
-        test_node = "4:541e34b4-9f36-4570-9bcc-626a32d21a74:17"
+        test_node = "4:5c5f4453-0aaf-4e9e-8324-595d0d5ab3a3:118"
         print(f"\nFinding potential connections for node {test_node}:")
         potential_connections = predictor.find_potential_connections(
             test_node,
-            top_k=10,
-            threshold=0.5
+            top_k=20,
+            threshold=0.2
         )
         for conn in potential_connections:
             print(f"Potential connection to {conn['target_id']} "
@@ -206,7 +252,7 @@ def main():
         missing_edges = predictor.find_missing_edges(test_node, threshold=0.2)
         
         print("\nTop potentially missing edges:")
-        for edge in missing_edges[:10]:  # Show top 10
+        for edge in missing_edges:  
             print(f"Missing edge: {edge['source_id']} ({edge['source_type']}) -> "
                   f"{edge['target_id']} ({edge['target_type']}) "
                   f"with probability {edge['probability']:.4f}")

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import RGCNConv
-from torch_geometric.data import Data
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.utils import negative_sampling
 import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score
@@ -13,9 +13,8 @@ from tqdm import tqdm
 
 class RGCN(nn.Module):
     def __init__(self, num_nodes: int, num_node_types: int, num_relations: int, 
-                 hidden_channels: int = 16, num_bases: int = None, dropout: float = 0.1):
+                 hidden_channels: int = 16, num_bases: int = None, dropout: float = 0.1, max_properties: int = None):
         super().__init__()
-        
 
         self.conv1 = RGCNConv(
             in_channels=hidden_channels,
@@ -34,6 +33,12 @@ class RGCN(nn.Module):
         self.node_emb = nn.Embedding(num_nodes, hidden_channels)
 
         self.node_type_emb = nn.Embedding(num_node_types, hidden_channels)
+        self.property_encoder = nn.Sequential(
+            nn.Linear(max_properties, hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_channels, hidden_channels)
+        )
     
         self.link_predictor = nn.Sequential(
             nn.Linear(hidden_channels * 2, hidden_channels),
@@ -43,9 +48,9 @@ class RGCN(nn.Module):
             nn.Sigmoid()
         )
         
-    def forward(self, x, edge_index, edge_type, node_type):
+    def forward(self, x, edge_index, edge_type, node_type, node_properties):
 
-        x = self.node_emb(x) + self.node_type_emb(node_type)
+        x = self.node_emb(x) + self.node_type_emb(node_type) + self.property_encoder(node_properties)
         x1 = F.relu(self.conv1(x, edge_index, edge_type))
         x = x + x1
 
@@ -77,7 +82,7 @@ class RGCNLinkPrediction:
 
     def extract_graph_data(self, node_labels: List[str], relationship_types: List[str]) -> Data:
         with self.driver.session() as session:
-            nodes, node_types = self._extract_nodes_batch(session, node_labels)
+            nodes, node_types, node_properties = self._extract_nodes_batch(session, node_labels)
             edge_index, edge_types = self._extract_edges_batch(session, relationship_types)
             
             return Data(
@@ -85,19 +90,56 @@ class RGCNLinkPrediction:
                 edge_index=torch.tensor(edge_index, dtype=torch.long),
                 edge_type=torch.tensor(edge_types, dtype=torch.long),
                 node_type=torch.tensor(node_types, dtype=torch.long),
+                node_properties = torch.tensor(node_properties, dtype=torch.float),
                 num_nodes=len(self.node_mapping)
             )
     
     def _extract_nodes_batch(self, session, node_labels: List[str]) -> Tuple[List[int], List[int]]:
         nodes = []
         node_types = []
+        node_properties = []
+
+        property_mappings = {
+            'Model': {
+                'props': ['Backbone', 'Batch_Size', 'Learning_Rate', 'Precision', 
+                        'Recall', 'test_accuracy'],
+                'numeric': ['Batch_Size', 'Learning_Rate', 'Precision', 'Recall', 'test_accuracy'],
+                'categorical': ['Backbone']
+            },
+            'Device': {
+                'props': ['device_id'],
+                'numeric': ['device_id'],
+                'categorical': []
+            },
+            'Deployment': {
+                'props': ['deployment_id', 'status'],
+                'numeric': ['deployment_id'],
+                'categorical': ['status']
+            },
+            'Server': {
+                'props': ['server_id'],
+                'categorical': ['server_id'],
+                'numeric': []
+            },
+            'Service': {
+                'props': ['service_id'],
+                'numeric': ['service_id'],
+                'categorical': []
+            }
+    }
         
         for label in node_labels:
             offset = 0
+            mapping = property_mappings.get(label, {'props': [], 'numeric': [], 'categorical': []})
+            props_to_extract = mapping['props']
             while True:
+                property_clause = ", ".join([
+                f"n.{prop} as {prop}" for prop in props_to_extract
+                ])
+                
                 query = f"""
                 MATCH (n:{label})
-                RETURN elementId(n) as id
+                RETURN elementId(n) as id {', ' + property_clause if property_clause else ''}
                 SKIP {offset} LIMIT {self.batch_size}
                 """
                 result = list(session.run(query))
@@ -113,10 +155,35 @@ class RGCNLinkPrediction:
                         
                     nodes.append(self.node_mapping[node_id])
                     node_types.append(self.node_type_mapping[label])
+
+                    properties = []
+                    for prop in mapping['numeric']:
+                        value = record.get(prop, 0)
+                        try:
+                            properties.append(float(value) if value is not None else 0.0)
+                        except (ValueError, TypeError):
+                            properties.append(0.0)
+                    # Handl categorical properties
+                    for prop in mapping['categorical']:
+                        value = record.get(prop, '')
+                        if value is not None:
+                            # Hashing categorical value and normalize to [0,1]
+                            hash_val = hash(str(value)) % 1000000
+                            properties.append(hash_val / 1000000.0)
+                        else:
+                            properties.append(0.0)
+                    
+                    # Ensuring fixed length by padding
+                    max_props = max(
+                        len(m['numeric']) + len(m['categorical']) 
+                        for m in property_mappings.values()
+                    )
+                    properties.extend([0.0] * (max_props - len(properties)))
+                    node_properties.append(properties)
                     
                 offset += self.batch_size
                 
-        return nodes, node_types
+        return nodes, node_types, node_properties
         
     def _extract_edges_batch(self, session, relationship_types: List[str]) -> Tuple[List[List[int]], List[int]]:
         edge_index = [[], []]
@@ -149,17 +216,19 @@ class RGCNLinkPrediction:
         return edge_index, edge_types
 
     
-    def train_model(self, data: Data, num_epochs: int = 200, 
+    def train_model(self, data: HeteroData, num_epochs: int = 200, 
                    hidden_channels: int = 16, negative_sampling_ratio: float = 1.0):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         data = data.to(device)
+        max_properties = data.node_properties.size(1)
     
         self.model = RGCN(
             num_nodes=data.num_nodes,
             num_node_types=len(self.node_type_mapping),
             num_relations=len(self.relation_mapping),
             hidden_channels=hidden_channels,
-            num_bases=4  
+            num_bases=4,
+            max_properties=max_properties
         ).to(device)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=10, factor=0.5)
@@ -172,7 +241,7 @@ class RGCNLinkPrediction:
             self.model.train()
             optimizer.zero_grad()
             
-            z = self.model(data.x, data.edge_index, data.edge_type, data.node_type)
+            z = self.model(data.x, data.edge_index, data.edge_type, data.node_type, data.node_properties)
             
             neg_edge_index = negative_sampling(
                 edge_index=data.edge_index,
@@ -211,7 +280,7 @@ class RGCNLinkPrediction:
     @torch.no_grad()
     def evaluate_model(self, data: Data) -> Tuple[float, float]:
         self.model.eval()
-        z = self.model(data.x, data.edge_index, data.edge_type, data.node_type)
+        z = self.model(data.x, data.edge_index, data.edge_type, data.node_type, data.node_properties)
         batch_size = 10000
         all_preds = []
         all_true = []
