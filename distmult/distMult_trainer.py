@@ -6,7 +6,7 @@ from torch_geometric.data import Data
 from torch_geometric.utils import negative_sampling
 from sklearn.metrics import roc_auc_score, average_precision_score
 from distMult_model import DistMult 
-from graph_loader import GraphLoader  
+from patra_rgcn.graph_loader import GraphLoader  
 from tqdm import tqdm
 
 class DistMultTrainer:

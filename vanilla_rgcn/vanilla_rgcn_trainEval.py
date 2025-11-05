@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch_geometric.nn import RGCNConv
 from tqdm import tqdm
 from vanilla_rgcn_model import VanillaRGCN
-from graph_loader import GraphLoader
+from patra_rgcn.graph_loader import GraphLoader
 
 class VanillaRGCNTrainer:
     def __init__(self, data: Data, hidden_channels: int = 16, dropout: float = 0.1, lr: float = 0.01):

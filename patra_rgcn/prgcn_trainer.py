@@ -7,8 +7,10 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torch_geometric.utils import negative_sampling
 from sklearn.metrics import roc_auc_score, average_precision_score
-from prgcn.prgcn_model import PRGCN
+from prgcn_model import PRGCN
 from graph_loader import GraphLoader
+from dotenv import load_dotenv
+load_dotenv()
 
 class PRGCNTrainer:
     def __init__(self, node_mapping, node_type_mapping, relation_mapping):
@@ -23,7 +25,6 @@ class PRGCNTrainer:
                     hidden_channels: int = 16, negative_sampling_ratio: float = 1.0):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         data = data.to(device)
-        print("Graph Data Keys:", data.keys())
 
         max_properties = data.node_properties.size(1)
     
@@ -36,7 +37,6 @@ class PRGCNTrainer:
             max_properties=max_properties
         ).to(device)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.005, weight_decay=1e-3)
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=10, factor=0.5)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
 
         best_auc = 0
@@ -59,7 +59,8 @@ class PRGCNTrainer:
             neg_pred = self.model.decode(z, neg_edge_index)
             
             loss = self.compute_loss(pos_pred, neg_pred)
-            auc, ap = self.evaluate_model(data)
+
+            auc, ap = self.evaluate_model(data) 
             print(f'Epoch: {epoch+1:03d}, Loss: {loss:.4f}, AUC: {auc}, Avg Precision: {ap}')
 
             loss.backward()
@@ -70,12 +71,10 @@ class PRGCNTrainer:
             if (epoch + 1) % 5 == 0:
                 auc, ap = self.evaluate_model(data)
                 print(f'Epoch: {epoch+1:03d}, Loss: {loss:.4f}, AUC: {auc:.4f}, Avg Precision: {ap:.4f}')
-                
-                # Adjust learning rate
+
                 scheduler.step()
 
-                # Early stopping
-                if auc > best_auc:
+                if auc is not None and auc > best_auc:
                     best_auc = auc
                     patience_counter = 0
                 else:
@@ -84,22 +83,6 @@ class PRGCNTrainer:
                 if patience_counter >= patience:
                     print("Early stopping triggered.")
                     break
-
-
-            # print(f'Epoch: {epoch+1:03d}, Loss: {loss:.4f}, AUC: {auc:.4f}, Avg Precision: {ap:.4f}')
-            # scheduler.step()
-            
-            # if auc > best_auc:
-            #     best_auc = auc
-            #     patience_counter = 0
-            # else:
-            #     patience_counter += 1
-                
-            # if patience_counter >= patience:
-            #     print("Early stopping triggered")
-            #     break
-
-        # self.plot_loss()
 
     
     def compute_loss(self,pos_pred: torch.Tensor, neg_pred: torch.Tensor) -> torch.Tensor:
@@ -110,7 +93,6 @@ class PRGCNTrainer:
     @torch.no_grad()
     def evaluate_model(self, data: Data) -> Tuple[float, float]:
         self.model.eval()
-        print("Evaluating model...")
 
         z = self.model(data.x, data.edge_index, data.edge_type, data.node_type, data.node_properties)
         batch_size = 20000
@@ -135,14 +117,12 @@ class PRGCNTrainer:
         pred = torch.cat(all_preds).cpu()
         true = torch.cat(all_true).cpu()
 
-        if len(true) == 0 or len(pred) == 0:
-            print("Warning: Empty predictions or labels!")
-            return None, None  # Prevents crashing
+        if len(true) == 0 or len(pred) == 0 or len(set(true.tolist())) <= 1:
+            return None, None 
 
-        auc = roc_auc_score(true, pred) if len(set(true.tolist())) > 1 else None
-        ap = average_precision_score(true, pred) if len(set(true.tolist())) > 1 else None
+        auc = roc_auc_score(true, pred)
+        ap = average_precision_score(true, pred)
 
-        print(f"AUC: {auc}, AP: {ap}")
         return auc, ap
     
     def plot_loss(self):
@@ -155,30 +135,11 @@ class PRGCNTrainer:
         plt.grid(True)
         plt.show()
 
-    def save_model(self, path: str):
-        if self.model is not None:
-            torch.save({
-                'model_state_dict': self.model.state_dict(),
-                'node_mapping': self.node_mapping,
-                'node_type_mapping': self.node_type_mapping,
-                'relation_mapping': self.relation_mapping
-            }, path)
-
-    def close(self):
-        if self.driver:
-            self.driver.close()
-            self.model = None
-            self._clear_mappings()
-
-    def _clear_mappings(self):
-        self.node_mapping.clear()
-        self.node_type_mapping.clear()
-        self.relation_mapping.clear()
 
 
 def main():
     
-    NEO4J_URI = "bolt://149.165.153.250:7688"
+    NEO4J_URI = os.getenv("NEO4J_URI")
     NEO4J_USERNAME = os.getenv("NEO4J_USER")  
     NEO4J_PWD = os.getenv("NEO4J_PWD")        
 
@@ -192,10 +153,8 @@ def main():
         print("Extracting graph data from Neo4j...")
         graph_data = graph_loader.extract_graph_data(node_labels, relationship_types)
         print("Graph data extracted successfully!")
-        print("graph data", graph_data,"------")
         print(f"Nodes: {graph_data.x.shape}")
-        # print(f"Edges: {graph_data.edge_index.shape}")
-        # print(f"Node Properties: {graph_data.node_properties.shape}")
+        
         print("Starting model training...")
         model_trainer = PRGCNTrainer(
             node_mapping=graph_loader.node_mapping,
@@ -206,11 +165,22 @@ def main():
         print("Model training completed!")
 
         model_save_path = "prgcn_wo_relu.pth"
-        torch.save(model_trainer.model.state_dict(), model_save_path)
-        print(f"Trained model saved at: {model_save_path}")
+
+        if model_trainer.model:
+            torch.save({
+                'model_state_dict': model_trainer.model.state_dict(),
+                'node_mapping': graph_loader.node_mapping, 
+                'node_type_mapping': graph_loader.node_type_mapping, 
+                'relation_mapping': graph_loader.relation_mapping,
+                'max_properties': graph_data.node_properties.size(1)
+            }, model_save_path)
+            print(f"Trained model and mappings saved at: {model_save_path}")
+        else:
+            print("Warning: Model object is None, skipping save.")
 
     finally:
-        graph_loader.close()
+
+        graph_loader.close() 
         print("Neo4j connection closed.")
 
 if __name__ == "__main__":

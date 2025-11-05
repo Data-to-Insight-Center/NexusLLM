@@ -7,7 +7,7 @@ from torch_geometric.data import Data
 from torch_geometric.utils import negative_sampling
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score, precision_recall_fscore_support, confusion_matrix
 from distMult_model import DistMult
-from graph_loader import GraphLoader
+from patra_rgcn.graph_loader import GraphLoader
 
 class DistMultEvaluator:
     def __init__(self, model_path: str):

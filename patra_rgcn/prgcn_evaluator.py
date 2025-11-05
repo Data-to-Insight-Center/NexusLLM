@@ -4,10 +4,11 @@ import numpy as np
 from torch_geometric.data import Data
 from torch_geometric.utils import negative_sampling
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score, precision_recall_fscore_support, confusion_matrix, precision_recall_curve
-from prgcn.prgcn_model import PRGCN  
+from prgcn_model import PRGCN  
 from graph_loader import GraphLoader  
 from sklearn.preprocessing import StandardScaler
-
+from dotenv import load_dotenv
+load_dotenv()
 
 class PRGCNEvaluator:
     def __init__(self, model_path: str):
@@ -165,7 +166,7 @@ def main():
     NEO4J_URI = "bolt://149.165.153.250:7688"
     NEO4J_USERNAME = os.getenv("NEO4J_USER")
     NEO4J_PWD = os.getenv("NEO4J_PWD")
-    MODEL_PATH = "trained_prgcn_model_11.pth"
+    MODEL_PATH = "prgcn_wo_relu.pth"
     
 
     graph_loader = GraphLoader(uri=NEO4J_URI, username=NEO4J_USERNAME, password=NEO4J_PWD)
