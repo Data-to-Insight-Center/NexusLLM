@@ -4,6 +4,8 @@ import torch_geometric.data
 from graph_loader import GraphLoader
 from dotenv import load_dotenv
 from typing import List, Tuple, Dict, Any
+from prgcn_model import PRGCN
+from constraints import VALID_LINK_CONSTRAINTS
 
 load_dotenv()
 
@@ -57,10 +59,7 @@ def predict_top_links(
     neo4j_user: str, 
     neo4j_pwd: str, 
     top_n: int = 5
-) -> List[Dict[str, Any]]:
-
-    from prgcn_model import PRGCN 
-    
+) -> List[Dict[str, Any]]:    
 
     node_labels = ['Model', 'ModelCard', 'Device', 'Deployment', 'Server', 'Service', 'Datasheet', 'BiasAnalysis', 'ExplainabilityAnalysis', 'ModelRequirements']
     relationship_types = ['deployedIn', 'modelOf', 'requestedBy', 'used', 'BIAS_ANALYSIS','REQUIREMENTS','XAI_ANALYSIS','TRAINED_ON','USED']
@@ -76,7 +75,10 @@ def predict_top_links(
         print("Graph data extracted successfully.")
         
         print("\n--- Searching Neo4j for Unconnected Node Pairs ---")
-        neo4j_candidate_ids = graph_loader.find_unconnected_nodes(node_labels=node_labels, limit=100) # Increased limit for better chance of finding 5
+        neo4j_candidate_ids = graph_loader.find_unconnected_nodes(
+            node_labels=node_labels,
+            constraints= VALID_LINK_CONSTRAINTS,
+            limit=100)
         
         pyg_candidate_pairs = []
         pyg_to_neo4j_id = {v: k for k, v in node_mapping.items()} 
@@ -130,7 +132,7 @@ def main():
     NEO4J_URI = os.getenv("NEO4J_URI")
     NEO4J_USERNAME = os.getenv("NEO4J_USER")
     NEO4J_PWD = os.getenv("NEO4J_PWD")
-
+    
     print("--- Running Link Prediction Workflow ---")
     top_recommendations = predict_top_links(
         model_path=MODEL_PATH,

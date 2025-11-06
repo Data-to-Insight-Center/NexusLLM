@@ -163,7 +163,7 @@ class GraphLoader:
                 offset += self.batch_size
         return edge_index, edge_types
     
-    def find_unconnected_nodes(self, node_labels: list, limit: int = 10):
+    def find_unconnected_nodes(self, node_labels: list, constraints: dict, limit: int = 10):
         """
         Finds a list of distinct, unconnected node pairs based on their Neo4j IDs.
         Returns: List of tuples [(Neo4j ID A, Neo4j ID B). (..,..)]
@@ -174,23 +174,52 @@ class GraphLoader:
         MATCH (a)
         WHERE ANY(label IN labels(a) WHERE label IN {label_list})
         WITH a
-        LIMIT {limit} // Select 10 distinct source nodes
+        LIMIT 10 // Step 1: Force diversity by selecting a few distinct source nodes (a)
 
         MATCH (b)
         WHERE ANY(label IN labels(b) WHERE label IN {label_list})
-        AND elementId(a) < elementId(b)
+        AND elementId(a) < elementId(b) // Optimization: avoid duplicate checks
         AND NOT (a)-[]-(b)
-        RETURN elementId(a) AS id_a, elementId(b) AS id_b
-        LIMIT {limit} // Get up to 20 unique pairs (from the 10 sources)
+
+        // Retrieve Element IDs and all labels for Python-side filtering
+        RETURN elementId(a) AS id_a, elementId(b) AS id_b, labels(a) AS labels_a, labels(b) AS labels_b
+        LIMIT 100 // Fetch a larger number to ensure we get 10 candidates after filtering
         """
+
+        all_candidates_raw = []
+
         try:
             with self.driver.session() as session:
                 result = session.run(query)
-                candidate_ids = [(record["id_a"], record["id_b"]) for record in result]
-                return candidate_ids
+                all_candidates_raw = list(result)
+                
         except Exception as e:
             print(f"Error finding unconnected nodes: {e}")
             return []
+
+        final_candidates = []
+        
+        for record in all_candidates_raw:
+            src_label = record["labels_a"][0] 
+            tgt_label = record["labels_b"][0]
+            
+            id_a = record["id_a"]
+            id_b = record["id_b"]
+            
+            is_a_to_b_valid = src_label in constraints and tgt_label in constraints.get(src_label, [])
+            
+            is_b_to_a_valid = tgt_label in constraints and src_label in constraints.get(tgt_label, [])
+
+            if is_a_to_b_valid:
+                final_candidates.append((id_a, id_b))
+            elif is_b_to_a_valid:
+                final_candidates.append((id_b, id_a)) 
+            if len(final_candidates) >= limit:
+                break
+                
+        print(f"INFO: Cypher found {len(all_candidates_raw)} raw pairs. Filtered to {len(final_candidates)} valid pairs.")
+        
+        return final_candidates[:limit]
         
 def main():
     NEO4J_URI = "bolt://149.165.175.36:7688"
