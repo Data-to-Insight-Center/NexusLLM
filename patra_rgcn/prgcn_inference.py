@@ -81,17 +81,20 @@ def predict_top_links(
             limit=100)
         
         pyg_candidate_pairs = []
+        name_lookup = {}
         pyg_to_neo4j_id = {v: k for k, v in node_mapping.items()} 
 
         if not neo4j_candidate_ids:
             print("No unconnected candidates found by Cypher query.")
             return []
 
-        for neo4j_id_a, neo4j_id_b in neo4j_candidate_ids:
+        for neo4j_id_a, neo4j_id_b, name_a, name_b in neo4j_candidate_ids:
             if neo4j_id_a in node_mapping and neo4j_id_b in node_mapping:
                 pyg_idx_a = node_mapping[neo4j_id_a]
                 pyg_idx_b = node_mapping[neo4j_id_b]
                 pyg_candidate_pairs.append((pyg_idx_a, pyg_idx_b))
+                name_lookup[pyg_idx_a] = name_a
+                name_lookup[pyg_idx_b] = name_b
         
         if not pyg_candidate_pairs:
             print("Warning: All Neo4j candidates were filtered out (not in the current graph_data).")
@@ -116,9 +119,10 @@ def predict_top_links(
                 
             final_recommendations.append({
                 "source_neo4j_id": pyg_to_neo4j_id.get(src_pyg.item()),
+                "source_name": str(name_lookup.get(src_pyg.item(), "N/A") or "N/A"),
                 "target_neo4j_id": pyg_to_neo4j_id.get(tgt_pyg.item()),
+                "target_name": str(name_lookup.get(tgt_pyg.item(), "N/A") or "N/A"),
                 "score": score.item(),
-                "recommendation": "RECOMMEND" if score.item() > 0.5 else "MAYBE"
             })
             
         return final_recommendations
@@ -145,9 +149,13 @@ def main():
     if top_recommendations:
         print("\n--- FINAL TOP 5 RECOMMENDATIONS ---")
         for rec in top_recommendations:
-            print(f"[{rec['recommendation']:9}] Neo4j IDs {rec['source_neo4j_id']} -> {rec['target_neo4j_id']} | Score: {rec['score']:.4f}")
-    else:
-        print("\nNo predictions were generated.")
+            print(
+                f"Source: {rec['source_name']:20} -> Target: {rec['target_name']:20} | " # <<< ADDED NAMES
+                f"Score: {rec['score']:.4f}\n"
+                f"{'':10} (IDs: {rec['source_neo4j_id']} -> {rec['target_neo4j_id']})" # <<< ADDED IDs on new line
+            )    
+        else:
+            print("\nNo predictions were generated.")
 
 
 if __name__ == "__main__":

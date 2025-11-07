@@ -174,16 +174,18 @@ class GraphLoader:
         MATCH (a)
         WHERE ANY(label IN labels(a) WHERE label IN {label_list})
         WITH a
-        LIMIT 10 // Step 1: Force diversity by selecting a few distinct source nodes (a)
+        LIMIT 50
 
         MATCH (b)
         WHERE ANY(label IN labels(b) WHERE label IN {label_list})
-        AND elementId(a) < elementId(b) // Optimization: avoid duplicate checks
+        AND elementId(a) < elementId(b)
         AND NOT (a)-[]-(b)
 
         // Retrieve Element IDs and all labels for Python-side filtering
-        RETURN elementId(a) AS id_a, elementId(b) AS id_b, labels(a) AS labels_a, labels(b) AS labels_b
-        LIMIT 100 // Fetch a larger number to ensure we get 10 candidates after filtering
+        RETURN elementId(a) AS id_a, elementId(b) AS id_b, 
+        labels(a) AS labels_a, labels(b) AS labels_b, 
+        a.name AS name_a, b.name AS name_b 
+        LIMIT 100
         """
 
         all_candidates_raw = []
@@ -211,9 +213,9 @@ class GraphLoader:
             is_b_to_a_valid = tgt_label in constraints and src_label in constraints.get(tgt_label, [])
 
             if is_a_to_b_valid:
-                final_candidates.append((id_a, id_b))
+                final_candidates.append((id_a, id_b, src_label, tgt_label))
             elif is_b_to_a_valid:
-                final_candidates.append((id_b, id_a)) 
+                final_candidates.append((id_b, id_a, src_label, tgt_label)) 
             if len(final_candidates) >= limit:
                 break
                 

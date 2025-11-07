@@ -6,27 +6,27 @@
 # Format: {SOURCE_NODE_LABEL: [ALLOWED_TARGET_NODE_LABEL, ...]}
 
 VALID_LINK_CONSTRAINTS = {
-    'Model Card': ['Data Sheet', 'Model Requirements', 'Bias Analysis', 'Explainability Analysis', 'Model'],
+    # 'Model Card': ['Data Sheet', 'Model Requirements', 'Bias Analysis', 'Explainability Analysis', 'Model'],
 
-    'Model': ['Deployment', 'Experiment'],
+    'Model': ['Deployment', 'Service'],
 
     'Server' : ['Deployment'],
 
-    'Deployment': ['Experiment', 'Device'],
+    'Deployment': ['Model', 'Device'],
 
-    'Experiment': ['Raw Image', 'User', 'Device', 'Model'],
+    # 'Experiment': ['Raw Image', 'User', 'Device', 'Model'],
     
-    'Data Sheet': ['Model Card'],
+    # 'Data Sheet': ['Model Card'],
     
-    'Model Requirements': ['Model Card'],
+    # 'Model Requirements': ['Model Card'],
     
-    'Bias Analysis': ['Model Card'],
+    # 'Bias Analysis': ['Model Card'],
     
-    'Explainability Analysis': ['Model Card'],
+    # 'Explainability Analysis': ['Model Card'],
 
-    'User': ['Experiment'],
+    # 'User': ['Experiment'],
 
-    'Raw Image': ['Experiment'],
+    # 'Raw Image': ['Experiment'],
 
-    'Device': ['Deployment', 'Experiment']
+    'Device': ['Deployment']
 }
